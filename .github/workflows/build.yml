@@ -1,0 +1,110 @@
+name: "Cobol-like-Haskell — 3OS Build + ProofLedger + Release"
+
+on:
+  push:
+    branches: [ main ]
+    tags-ignore: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cobol-like-haskell-${{ github.ref }}
+  cancel-in-progress: false   # 절대 자동 취소 방지
+
+jobs:
+  build:
+    name: "Build — ${{ matrix.os }}"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      # -------------------------------------------------------------
+      # CHECKOUT
+      # -------------------------------------------------------------
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # -------------------------------------------------------------
+      # SETUP HASKELL (GHC + Cabal)
+      # -------------------------------------------------------------
+      - name: Setup Haskell
+        uses: haskell/actions/setup@v2
+        with:
+          ghc-version: "9.4.8"
+          cabal-version: "3.10.1.0"
+
+      # -------------------------------------------------------------
+      # BUILD (GHC compile)
+      # -------------------------------------------------------------
+      - name: Build Cobol-like-Haskell
+        shell: bash
+        run: |
+          mkdir -p dist
+          ghc src/Main.hs -o dist/cobol-hs
+
+      # -------------------------------------------------------------
+      # PROOFLEDGER (Windows + Linux/macOS 모두 성공)
+      # -------------------------------------------------------------
+      - name: Generate ProofLedger
+        shell: bash
+        run: |
+          echo "Repository: Cobol-like-Haskell" > proofledger-${{ matrix.os }}.txt
+          echo "Commit: $GITHUB_SHA" >> proofledger-${{ matrix.os }}.txt
+          echo "Branch: $GITHUB_REF_NAME" >> proofledger-${{ matrix.os }}.txt
+          echo "OS: ${{ matrix.os }}" >> proofledger-${{ matrix.os }}.txt
+          echo "Build Time: $(date)" >> proofledger-${{ matrix.os }}.txt
+          echo "-------------------------------------------" >> proofledger-${{ matrix.os }}.txt
+
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            certutil -hashfile dist\\cobol-hs.exe SHA256 >> proofledger-${{ matrix.os }}.txt
+          else
+            sha256sum dist/cobol-hs >> proofledger-${{ matrix.os }}.txt
+          fi
+
+      # -------------------------------------------------------------
+      # UPLOAD ARTIFACTS
+      # -------------------------------------------------------------
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cobol-like-haskell-${{ matrix.os }}
+          path: |
+            dist/**
+            proofledger-${{ matrix.os }}.txt
+
+
+  # -------------------------------------------------------------
+  # MERGE ALL RELEASE ARTIFACTS (모든 OS 묶어서 ZIP 생성)
+  # -------------------------------------------------------------
+  merge:
+    name: "Merge Release Bundle"
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: merged
+
+      - name: Create ZIP Bundle
+        run: |
+          cd merged
+          zip -r cobol-like-haskell-allos.zip .
+
+      - name: Upload Final Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: cobol-like-haskell-release-bundle
+          path: merged/cobol-like-haskell-allos.zip
